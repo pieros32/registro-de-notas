@@ -102,7 +102,7 @@ defineProps({
   },
   passScore: {
     type: Number,
-    default: 11,
+    default: 12,
   },
 });
 

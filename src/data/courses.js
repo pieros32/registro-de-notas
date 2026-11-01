@@ -1,4 +1,4 @@
-export const PASS = 11;
+export const PASS = 12;
 export const MAX = 20;
 export const STORAGE_KEY = "notas-v1";
 export const THEME_KEY = "notas-theme";

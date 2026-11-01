@@ -87,6 +87,7 @@
             <th class="center">Peso %</th>
             <th class="center">Nota</th>
             <th class="right">Aporte</th>
+            <th class="center">Estado</th>
           </tr>
         </thead>
         <tbody>
@@ -103,6 +104,7 @@
                 step="any"
                 class="weight-input"
                 :value="getWeight(course, index)"
+                :disabled="isLocked(course.id, index)"
                 @input="onWeightInput(index, $event.target.value)"
                 title="Editar porcentaje de peso"
               />
@@ -112,7 +114,7 @@
                 type="number"
                 min="0"
                 :max="maxScore"
-                step="any"
+                step="1"
                 class="grade-input"
                 :class="{
                   'is-graded': getGrade(course, index) !== '',
@@ -121,6 +123,7 @@
                 }"
                 placeholder="--"
                 :value="getGrade(course, index)"
+                :disabled="isLocked(course.id, index)"
                 @input="onGradeInput(index, $event.target.value)"
                 title="Ingresar nota (0 - 20)"
               />
@@ -130,6 +133,18 @@
               :class="{ 'has-points': getGrade(course, index) !== '' }"
             >
               {{ calculateAporte(index) }}
+            </td>
+            <td class="center">
+              <button
+                v-if="isLocked(course.id, index)"
+                type="button"
+                class="lock-btn"
+                title="Modificar esta nota (deberás confirmarla de nuevo)"
+                @click="$emit('unlock', { courseId: course.id, index })"
+              >
+                🔒 Modificar
+              </button>
+              <span v-else class="draft-tag">Borrador</span>
             </td>
           </tr>
         </tbody>
@@ -148,6 +163,18 @@
         @click="$emit('reset-weights', course)"
       >
         Restablecer
+      </button>
+    </div>
+
+    <!-- Confirm grades -->
+    <div class="confirm-row">
+      <button
+        type="button"
+        class="confirm-btn"
+        :disabled="pendingCount === 0"
+        @click="$emit('confirm', course)"
+      >
+        ✔ Confirmar notas<template v-if="pendingCount"> ({{ pendingCount }})</template>
       </button>
     </div>
   </article>
@@ -173,9 +200,17 @@ const props = defineProps({
     type: Function,
     required: true,
   },
+  isLocked: {
+    type: Function,
+    required: true,
+  },
+  pendingCount: {
+    type: Number,
+    default: 0,
+  },
   passScore: {
     type: Number,
-    default: 11,
+    default: 12,
   },
   maxScore: {
     type: Number,
@@ -183,7 +218,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['update-weight', 'update-grade', 'reset-weights']);
+const emit = defineEmits(['update-weight', 'update-grade', 'reset-weights', 'confirm', 'unlock']);
 
 function onWeightInput(index, val) {
   emit('update-weight', { courseId: props.course.id, index, value: val });

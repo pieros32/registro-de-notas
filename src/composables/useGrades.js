@@ -1,7 +1,13 @@
 import { ref, computed, watch } from 'vue';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase.js';
 import { COURSES, PASS, MAX, STORAGE_KEY, THEME_KEY } from '../data/courses.js';
 
-export function useGrades() {
+export function useGrades(uid) {
+  const gradesRef = doc(db, 'users', uid, 'data', 'grades');
+  let remoteLoaded = false;
+  let saveTimer;
+
   // State: { "courseId|index": { grade: string, weight: number | string } }
   const state = ref(loadInitialState());
   const searchQuery = ref('');
@@ -44,6 +50,23 @@ export function useGrades() {
     }
   }
 
+  // Load from Firestore; if nothing there yet, the local data gets uploaded on the next save
+  getDoc(gradesRef)
+    .then((snap) => {
+      if (snap.exists()) state.value = JSON.parse(snap.data().json);
+      else if (Object.keys(state.value).length) saveRemote(state.value);
+    })
+    .catch((e) => console.error('Error loading grades from Firestore:', e))
+    .finally(() => {
+      remoteLoaded = true;
+    });
+
+  function saveRemote(val) {
+    setDoc(gradesRef, { json: JSON.stringify(val) }).catch((e) =>
+      console.error('Error saving grades to Firestore:', e)
+    );
+  }
+
   // Auto save on state changes
   watch(
     state,
@@ -53,6 +76,9 @@ export function useGrades() {
       } catch (e) {
         console.error('Error saving grades to localStorage:', e);
       }
+      if (!remoteLoaded) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => saveRemote(val), 600);
     },
     { deep: true }
   );
@@ -73,7 +99,36 @@ export function useGrades() {
     return state.value[k]?.grade ?? '';
   };
 
+  // A row is "fixed" once its grade has been confirmed; it can't change until unlocked
+  const isLocked = (courseId, index) => state.value[getKey(courseId, index)]?.locked === true;
+
+  const hasGrade = (courseId, index) => {
+    const g = state.value[getKey(courseId, index)]?.grade;
+    return g !== undefined && g !== '' && !isNaN(parseFloat(g));
+  };
+
+  const pendingCount = (course) =>
+    course.items.filter((_, i) => !isLocked(course.id, i) && hasGrade(course.id, i)).length;
+
+  const confirmCourse = (course) => {
+    const updated = { ...state.value };
+    course.items.forEach((_, i) => {
+      const k = getKey(course.id, i);
+      if (!updated[k]?.locked && hasGrade(course.id, i)) {
+        updated[k] = { ...updated[k], locked: true };
+      }
+    });
+    state.value = updated;
+  };
+
+  const unlockRow = (courseId, index) => {
+    const k = getKey(courseId, index);
+    if (!state.value[k]?.locked) return;
+    state.value = { ...state.value, [k]: { ...state.value[k], locked: false } };
+  };
+
   const setGrade = (courseId, index, rawValue) => {
+    if (isLocked(courseId, index)) return;
     const k = getKey(courseId, index);
     const item = { ...(state.value[k] || {}) };
 
@@ -95,13 +150,14 @@ export function useGrades() {
     } else if (num < 0) {
       item.grade = '0';
     } else {
-      item.grade = rawValue;
+      item.grade = String(Math.round(num)); // grades are whole numbers only
     }
 
     state.value = { ...state.value, [k]: item };
   };
 
   const setWeight = (courseId, index, rawValue) => {
+    if (isLocked(courseId, index)) return;
     const k = getKey(courseId, index);
     const item = { ...(state.value[k] || {}) };
 
@@ -129,21 +185,24 @@ export function useGrades() {
     const updated = { ...state.value };
     course.items.forEach((item, index) => {
       const k = getKey(course.id, index);
-      if (updated[k]) {
+      if (updated[k] && !updated[k].locked) {
         updated[k] = { ...updated[k], weight: item.weight };
       }
     });
     state.value = updated;
   };
 
+  // Confirmed (fixed) grades survive the reset; only drafts are cleared
   const resetAll = () => {
-    state.value = {};
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
+    const kept = {};
+    Object.entries(state.value).forEach(([k, v]) => {
+      if (v?.locked) kept[k] = v;
+    });
+    state.value = kept;
   };
 
-  const getCourseStats = (course) => {
+  // gradeOf lets scenarios reuse the same math with their own simulated grades
+  const getCourseStats = (course, gradeOf = getGrade) => {
     let earned = 0;
     let usedWeight = 0;
     let totalWeight = 0;
@@ -153,7 +212,7 @@ export function useGrades() {
       const rawW = getWeight(course, i);
       const w = rawW === '' ? 0 : Number(rawW);
       totalWeight += w;
-      const g = getGrade(course, i);
+      const g = gradeOf(course, i);
       if (g !== '') {
         const val = parseFloat(g);
         if (!isNaN(val)) {
@@ -172,7 +231,7 @@ export function useGrades() {
     const remainingWeight = Math.max(0, totalWeight - usedWeight);
     const maxPossiblePoints = (totalWeight * MAX) / 100;
 
-    // Simulation for target PASS (11.00)
+    // Simulation for target PASS (12.00)
     let neededInRemaining = null;
     let passStatus = 'pending';
 
@@ -275,6 +334,10 @@ export function useGrades() {
     applyThemeClass,
     getWeight,
     getGrade,
+    isLocked,
+    pendingCount,
+    confirmCourse,
+    unlockRow,
     setWeight,
     setGrade,
     resetCourseWeights,

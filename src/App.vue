@@ -10,8 +10,24 @@
 
     <!-- Main Content -->
     <main>
+      <nav class="view-tabs" aria-label="Vista">
+        <button type="button" class="filter-btn" :class="{ active: view === 'notas' }" @click="view = 'notas'">📒 Notas</button>
+        <button type="button" class="filter-btn" :class="{ active: view === 'escenarios' }" @click="view = 'escenarios'">🧪 Escenarios ({{ scenarioApi.scenarios.value.length }})</button>
+      </nav>
+
+      <ScenariosView
+        v-if="view === 'escenarios'"
+        :api="scenarioApi"
+        :COURSES="COURSES"
+        :PASS="PASS"
+        :MAX="MAX"
+        :get-weight="getWeight"
+        :get-grade="getGrade"
+        :is-locked="isLocked"
+      />
+
       <!-- Toolbar -->
-      <section class="toolbar-container" aria-label="Filtros y acciones">
+      <section v-show="view === 'notas'" class="toolbar-container" aria-label="Filtros y acciones">
         <!-- Search bar -->
         <div class="search-box">
           <svg
@@ -94,13 +110,16 @@
               <polyline points="3 6 5 6 21 6"></polyline>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
-            Borrar todas las notas
+            Borrar notas sin confirmar
+          </button>
+          <button type="button" class="btn-danger-outline" @click="logout">
+            Cerrar sesión
           </button>
         </div>
       </section>
 
       <!-- Courses Grid -->
-      <div v-if="filteredCourses.length > 0" class="grid-courses">
+      <div v-if="view === 'notas' && filteredCourses.length > 0" class="grid-courses">
         <CourseCard
           v-for="course in filteredCourses"
           :key="course.id"
@@ -108,21 +127,25 @@
           :stats="getCourseStats(course)"
           :get-weight="getWeight"
           :get-grade="getGrade"
+          :is-locked="isLocked"
+          :pending-count="pendingCount(course)"
           :pass-score="PASS"
           :max-score="MAX"
           @update-weight="handleUpdateWeight"
           @update-grade="handleUpdateGrade"
           @reset-weights="handleResetWeights"
+          @confirm="confirmCourse"
+          @unlock="({ courseId, index }) => unlockRow(courseId, index)"
         />
       </div>
 
       <!-- Empty State -->
-      <div v-else class="empty-state">
+      <div v-else-if="view === 'notas'" class="empty-state">
         <p>No se encontraron cursos que coincidan con "{{ searchQuery }}".</p>
       </div>
 
       <!-- Informative hint footer -->
-      <footer class="hint-footer">
+      <footer v-show="view === 'notas'" class="hint-footer">
         <p>
           💡 <strong>Guía de cálculo:</strong> Escala 0–20. El promedio de cada curso se calcula solo con las notas ingresadas ponderadas por su peso. El promedio general es el promedio simple de los cursos que ya cuentan con calificaciones registradas. Los pesos se pueden editar dinámicamente y los cambios se guardan de forma automática en tu navegador.
         </p>
@@ -132,9 +155,9 @@
     <!-- Modal for clearing grades -->
     <ConfirmModal
       :is-open="isResetModalOpen"
-      title="¿Restablecer todas las notas?"
-      message="Esta acción borrará todas las notas ingresadas y restablecerá los pesos de todos los cursos a sus valores predeterminados. ¿Deseas continuar?"
-      confirm-text="Sí, restablecer todo"
+      title="¿Borrar las notas sin confirmar?"
+      message="Se borrarán las notas en borrador (sin confirmar). Las notas ya confirmadas permanecen fijas y solo se pueden cambiar con «Modificar». ¿Deseas continuar?"
+      confirm-text="Sí, borrar borradores"
       cancel-text="Cancelar"
       @confirm="confirmResetAll"
       @cancel="isResetModalOpen = false"
@@ -145,9 +168,14 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useGrades } from './composables/useGrades.js';
+import { useAuth } from './composables/useAuth.js';
 import HeaderBar from './components/HeaderBar.vue';
 import CourseCard from './components/CourseCard.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
+import ScenariosView from './components/ScenariosView.vue';
+import { useScenarios } from './composables/useScenarios.js';
+
+const props = defineProps({ uid: { type: String, required: true } });
 
 const {
   COURSES,
@@ -160,6 +188,10 @@ const {
   applyThemeClass,
   getWeight,
   getGrade,
+  isLocked,
+  pendingCount,
+  confirmCourse,
+  unlockRow,
   setWeight,
   setGrade,
   resetCourseWeights,
@@ -167,7 +199,12 @@ const {
   getCourseStats,
   overallStats,
   filteredCourses,
-} = useGrades();
+} = useGrades(props.uid);
+
+const { logout } = useAuth();
+
+const view = ref('notas');
+const scenarioApi = useScenarios(props.uid, { getGrade, isLocked, getCourseStats });
 
 const isResetModalOpen = ref(false);
 
